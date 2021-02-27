@@ -4,18 +4,23 @@ package com.rmwkwok.searchbackend;
 import org.apache.lucene.analysis.en.EnglishAnalyzer;
 import org.apache.lucene.analysis.standard.StandardAnalyzer;
 import org.apache.lucene.document.Document;
-import org.apache.lucene.index.DirectoryReader;
+import org.apache.lucene.index.*;
 import org.apache.lucene.queryparser.classic.ParseException;
 import org.apache.lucene.queryparser.classic.QueryParser;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.search.ScoreDoc;
 import org.apache.lucene.search.TopDocs;
+import org.apache.lucene.search.similarities.BM25Similarity;
 import org.apache.lucene.store.FSDirectory;
+//import org.deeplearning4j.models.embeddings.loader.WordVectorSerializer;
+//import org.deeplearning4j.models.word2vec.Word2Vec;
 import org.json.simple.JSONArray;
 import org.springframework.web.bind.annotation.*;
 
+import java.io.FileWriter;
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.*;
 
@@ -25,48 +30,74 @@ import java.util.*;
 public class LuceneSearch {
 
     // configuration
-    final int numSearchResult = 25;
-    final int minSnippetWords = 30*2;
-    final private String indexPath = "/home/raymondkwok/git/InformationRetrieval/index";
+//    final boolean doQueryExpansion = false;
+    final private int closeCoOccurrenceCondition = SearchbackendApplication.closeCoOccurrenceCondition;
+    final private int numSearchResult = SearchbackendApplication.numSearchResult;
+    final private int minSnippetWords = SearchbackendApplication.minSnippetWords;
+    final private String indexPath = SearchbackendApplication.indexPath;
+//    final private String docCentroidPath = "/home/raymondkwok/git/InformationRetrieval/docCentroid.txt";
+
+    // ID = 5 is used. http://vectors.nlpl.eu/repository/
+//    final private String word2vecPath = "/home/raymondkwok/git/InformationRetrieval/word2vec/model.bin";
     // configuration end
 
+//    final private Word2Vec word2Vec;
     final private QueryParser queryParser;
     final private QueryParser snippetParser;
     final private IndexSearcher indexSearcher;
 
-//        final private CustomAnalyzer customAnalyzer = CustomAnalyzer.builder()
-//            .withTokenizer(StandardTokenizerFactory.NAME)
-//            .addTokenFilter("englishPossessive")
-//            .addTokenFilter("lowercase")
-//            .addTokenFilter("stop")
-//            .addTokenFilter("porterStem")
-//            .addTokenFilter(W2VSynonymFilter)
-
     LuceneSearch() throws IOException {
+
+        long startTime = System.nanoTime();
         queryParser = new QueryParser("content", new EnglishAnalyzer());
         snippetParser = new QueryParser("", new StandardAnalyzer());
         indexSearcher = new IndexSearcher(DirectoryReader.open(FSDirectory.open(Paths.get(indexPath))));
-//        indexSearcher.setSimilarity(new BM25Similarity());
+        indexSearcher.setSimilarity(new BM25Similarity());
+
+        // https://deeplearning4j.konduit.ai/language-processing/word2vec#word-2-vec-setup
+//        word2Vec = WordVectorSerializer.readWord2VecModel(word2vecPath);
+
+//        if (!Files.exists(Paths.get(docCentroidPath))) {
+//            getDocCentroid();
+//        }
+
+        long endTime = System.nanoTime();
+        System.out.println((endTime - startTime)/1e6);
     }
 
-    private TopDocs searchTopDocs(String queryString)
-            throws IOException, ParseException {
-        Query query = queryParser.parse(queryString);
-        return indexSearcher.search(query, numSearchResult);
-    }
+//    private void getDocCentroid() throws IOException {
+//        IndexReader reader = DirectoryReader.open(FSDirectory.open(Paths.get(indexPath)));
+//        int numDoc = reader.maxDoc();
+//
+//        FileWriter myWriter = new FileWriter(docCentroidPath);
+//        myWriter.write(String.valueOf(numDoc) + " " + String.valueOf(word2Vec.getLayerSize()) + "\n");
+//
+//        for (int docID = 0; docID < numDoc; docID++) {
+//            int vectorCount = 0;
+//            double[] vectorSum = new double[word2Vec.getLayerSize()];
+//            for (String term: reader.document(docID).get("content").split("[^a-zA-Z0-9]")) {
+//                double[] vector = word2Vec.getWordVector(term);
+//                if (vector != null) {
+//                    Arrays.setAll(vectorSum, i -> vectorSum[i] + vector[i]);
+//                    vectorCount++;
+//                }
+//            }
+//
+//            myWriter.write(String.valueOf(docID));
+//            for (double v: vectorSum)
+//                myWriter.write(" " + String.valueOf(v / vectorCount));
+//            myWriter.write('\n');
+//        }
+//        myWriter.close();
+//    }
 
-    private Document getDocument(int docId)
-            throws IOException {
-        return indexSearcher.doc(docId);
-    }
-
-    private String[] getParsedTerms(String queryString) {
+    private String[] getParsedTerms(QueryParser queryParser, String queryString) {
 
         // use the snippetParser.parse to do the parsing
         // however, I do not know how to get parsed terms properly
         // so use toString() and expect a list of field:term delimited by space
         try {
-            return snippetParser.parse(queryString).toString().split(" ");
+            return queryParser.parse(queryString).toString().split(" ");
         }
         catch (ParseException e) {
             return new String[0];
@@ -77,19 +108,7 @@ public class LuceneSearch {
         return Arrays.stream(strings).distinct().toArray(String[]::new);
     }
 
-    private String getSnippet(String queryString, String contentString) {
-
-        // convert queryString to a list of parsed words
-        String[] queryTerms = getParsedTerms(queryString);
-
-        // keep distinct query terms only
-        queryTerms = getDistinctTerms(queryTerms);
-
-        // convert contentTerms to List of terms
-        String[] contentTerms = contentString.split("((?<=[^a-zA-Z0-9])|(?=[^a-zA-Z0-9]))");
-
-        // snippet extraction
-        // First, locate all matched terms.
+    private List<Integer> getMatchedLocations(String[] queryTerms, String[] contentTerms) {
         List<Integer> matchedLocations = new ArrayList<>();
 
         for (int i = 0; i < contentTerms.length; i++) {
@@ -98,7 +117,7 @@ public class LuceneSearch {
             // a contentTerm can contain more than one sub-terms,
             // as soon as a sub-term matches with a query term,
             // the whole contentTerm is considered matched
-            for (String content : getParsedTerms(contentTerms[i])) {
+            for (String content : getParsedTerms(snippetParser, contentTerms[i])) {
                 for (String query : queryTerms) {
                     if (content.equals(query)) {
                         matchedLocations.add(i);
@@ -109,6 +128,24 @@ public class LuceneSearch {
                 if (isMatch) break;
             }
         }
+
+        return matchedLocations;
+    }
+
+    private String getSnippet(String queryString, String contentString) {
+
+        // convert queryString to a list of parsed words
+        String[] queryTerms = getParsedTerms(snippetParser, queryString);
+
+        // keep distinct query terms only
+        queryTerms = getDistinctTerms(queryTerms);
+
+        // convert contentTerms to List of terms
+        String[] contentTerms = contentString.split("((?<=[^a-zA-Z0-9])|(?=[^a-zA-Z0-9]))");
+
+        // snippet extraction
+        // First, locate all matched terms.
+        List<Integer> matchedLocations = getMatchedLocations(queryTerms, contentTerms);
 
         // Second, find a snippet window with highest density
         // Initially, all matched locations are seeds (index, window length).
@@ -144,7 +181,58 @@ public class LuceneSearch {
         int i = seed.keySet().stream().min(Integer::compare).orElse(0);
         int j = i + n;
 
-        return String.join("", Arrays.copyOfRange(contentTerms, matchedLocations.get(i), matchedLocations.get(j)));
+        try {
+            return String.join("", Arrays.copyOfRange(contentTerms, matchedLocations.get(i), matchedLocations.get(j)));
+        } catch (Exception e) {
+            return "No Snippet Available";
+        }
+    }
+
+//    private String expandQueryTerms(String queryString) {
+//
+//        for (String term: getParsedTerms(snippetParser, queryString)) {
+//            List<String> newTerms = word2Vec.similarWordsInVocabTo(term, 0.8);
+//
+//            int count = 0;
+//            for (String newTerm: newTerms) {
+//                if (count < 3 && !newTerm.equals(term)) {
+//                    try {
+//                        queryParser.parse(newTerm);
+//                    } catch (ParseException e) {
+//                        continue;
+//                    }
+//                    queryString = queryString + " " + newTerm;
+//                    count++;
+//                }
+//            }
+//        }
+//        return queryString;
+//    }
+
+    private int getNumCloseCoOccurrence(String queryString, String contentString) {
+        // convert queryString to a list of parsed words
+        String[] queryTerms = getParsedTerms(snippetParser, queryString);
+
+        // keep distinct query terms only
+        queryTerms = getDistinctTerms(queryTerms);
+
+        // convert contentTerms to List of terms
+        String[] contentTerms = contentString.split("[^a-zA-Z0-9]");
+
+        // snippet extraction
+        // First, locate all matched terms.
+        List<Integer> matchedLocations = getMatchedLocations(queryTerms, contentTerms);
+
+        int numCloseCoOccurrence = 0;
+
+        for (int i = 0; i < matchedLocations.size() - 1; i++) {
+            int loc1 = matchedLocations.get(i+1);
+            int loc2 = matchedLocations.get(i);
+            if (loc1 - loc2 <= closeCoOccurrenceCondition && !contentTerms[loc1].equals(contentTerms[loc2]))
+                numCloseCoOccurrence += 1;
+        }
+
+        return numCloseCoOccurrence;
     }
 
     @GetMapping("/lucene")
@@ -154,18 +242,41 @@ public class LuceneSearch {
 
         long startTime = System.nanoTime();
 
-        List<Map<String, String>> queryResults = new ArrayList<>();
-        TopDocs topDocs = searchTopDocs(queryString);
+        // expand query term by word2vec
+//        if (doQueryExpansion)
+//            queryString = expandQueryTerms(queryString);
+
+        List<Map<String, Object>> queryResults = new ArrayList<>();
+
+        // Lucene search
+        Query query = queryParser.parse(queryString);
+        TopDocs topDocs = indexSearcher.search(query, numSearchResult);
         ScoreDoc[] scoreDocs = topDocs.scoreDocs;
 
-        for (ScoreDoc scoreDoc : scoreDocs) {
-            Document document = getDocument(scoreDoc.doc);
+        //test
+//        FSDirectory directory = FSDirectory.open(Paths.get(indexPath));
+//        IndexReader reader = DirectoryReader.open(directory);
 
-            Map<String, String> result = new HashMap<>();
+        // construct return
+        for (ScoreDoc scoreDoc : scoreDocs) {
+            Document document = indexSearcher.doc(scoreDoc.doc);
+
+//            Terms terms = reader.getTermVector(scoreDoc.doc, "content");
+//            final TermsEnum it = terms.iterator();
+//            BytesRef term = it.next();
+//            while (term != null) {
+//                String termString = term.utf8ToString();
+//                System.out.print(termString + ": ");
+//                term = it.next();
+//            }
+
+            Map<String, Object> result = new HashMap<>();
             result.put("age", document.get("Headers.Age"));
             result.put("url", document.get("url"));
             result.put("title", document.get("title"));
-            result.put("page_rank_score", document.get("page_rank_score"));
+            result.put("page_rank_score", Double.parseDouble(document.get("page_rank_score")));
+            result.put("BM25_score", scoreDoc.score);
+            result.put("numCloseCoOccurrence", getNumCloseCoOccurrence(queryString, document.get("content")));
             result.put("snippet", getSnippet(queryString, document.get("content")));
             queryResults.add(result);
         }

@@ -18,6 +18,13 @@
 	</properties>
 	<dependencies>
 
+		<!-- https://mvnrepository.com/artifact/dk.e-software/commandLineParser -->
+		<dependency>
+			<groupId>dk.e-software</groupId>
+			<artifactId>commandLineParser</artifactId>
+			<version>1.2.0</version>
+		</dependency>
+
 		<dependency>
 			<groupId>org.apache.lucene</groupId>
 			<artifactId>lucene-analyzers-common</artifactId>

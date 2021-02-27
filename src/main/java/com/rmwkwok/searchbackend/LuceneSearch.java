@@ -1,6 +1,5 @@
 package com.rmwkwok.searchbackend;
 
-
 import org.apache.lucene.analysis.en.EnglishAnalyzer;
 import org.apache.lucene.analysis.standard.StandardAnalyzer;
 import org.apache.lucene.document.Document;
@@ -13,86 +12,43 @@ import org.apache.lucene.search.ScoreDoc;
 import org.apache.lucene.search.TopDocs;
 import org.apache.lucene.search.similarities.BM25Similarity;
 import org.apache.lucene.store.FSDirectory;
-//import org.deeplearning4j.models.embeddings.loader.WordVectorSerializer;
-//import org.deeplearning4j.models.word2vec.Word2Vec;
 import org.json.simple.JSONArray;
 import org.springframework.web.bind.annotation.*;
 
-import java.io.FileWriter;
 import java.io.IOException;
-import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.*;
+import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/search")
 @CrossOrigin("*")
 public class LuceneSearch {
 
-    // configuration
-//    final boolean doQueryExpansion = false;
-    final private int closeCoOccurrenceCondition = SearchbackendApplication.closeCoOccurrenceCondition;
-    final private int numSearchResult = SearchbackendApplication.numSearchResult;
+    final boolean doQueryExpansion = SearchbackendApplication.doQueryExpansion;
+    final boolean doQueryModification = SearchbackendApplication.doQueryModification;
     final private int minSnippetWords = SearchbackendApplication.minSnippetWords;
-    final private String indexPath = SearchbackendApplication.indexPath;
-//    final private String docCentroidPath = "/home/raymondkwok/git/InformationRetrieval/docCentroid.txt";
+    final private int numSearchResult = SearchbackendApplication.numSearchResult;
+    final private int numExtraSearchResult = SearchbackendApplication.numExtraSearchResult;
+    final private int closeCoOccurrenceCondition = SearchbackendApplication.closeCoOccurrenceCondition;
 
-    // ID = 5 is used. http://vectors.nlpl.eu/repository/
-//    final private String word2vecPath = "/home/raymondkwok/git/InformationRetrieval/word2vec/model.bin";
-    // configuration end
-
-//    final private Word2Vec word2Vec;
+    final private Word2VecObj w2vObj;
     final private QueryParser queryParser;
     final private QueryParser snippetParser;
     final private IndexSearcher indexSearcher;
 
     LuceneSearch() throws IOException {
-
         long startTime = System.nanoTime();
         queryParser = new QueryParser("content", new EnglishAnalyzer());
         snippetParser = new QueryParser("", new StandardAnalyzer());
-        indexSearcher = new IndexSearcher(DirectoryReader.open(FSDirectory.open(Paths.get(indexPath))));
+        indexSearcher = new IndexSearcher(DirectoryReader.open(FSDirectory.open(Paths.get(SearchbackendApplication.indexFolder))));
         indexSearcher.setSimilarity(new BM25Similarity());
-
-        // https://deeplearning4j.konduit.ai/language-processing/word2vec#word-2-vec-setup
-//        word2Vec = WordVectorSerializer.readWord2VecModel(word2vecPath);
-
-//        if (!Files.exists(Paths.get(docCentroidPath))) {
-//            getDocCentroid();
-//        }
-
+        w2vObj = new Word2VecObj();
         long endTime = System.nanoTime();
-        System.out.println((endTime - startTime)/1e6);
+        System.out.println("LuceneSearch initialization took " + (endTime - startTime)/1e6 + "ms");
     }
 
-//    private void getDocCentroid() throws IOException {
-//        IndexReader reader = DirectoryReader.open(FSDirectory.open(Paths.get(indexPath)));
-//        int numDoc = reader.maxDoc();
-//
-//        FileWriter myWriter = new FileWriter(docCentroidPath);
-//        myWriter.write(String.valueOf(numDoc) + " " + String.valueOf(word2Vec.getLayerSize()) + "\n");
-//
-//        for (int docID = 0; docID < numDoc; docID++) {
-//            int vectorCount = 0;
-//            double[] vectorSum = new double[word2Vec.getLayerSize()];
-//            for (String term: reader.document(docID).get("content").split("[^a-zA-Z0-9]")) {
-//                double[] vector = word2Vec.getWordVector(term);
-//                if (vector != null) {
-//                    Arrays.setAll(vectorSum, i -> vectorSum[i] + vector[i]);
-//                    vectorCount++;
-//                }
-//            }
-//
-//            myWriter.write(String.valueOf(docID));
-//            for (double v: vectorSum)
-//                myWriter.write(" " + String.valueOf(v / vectorCount));
-//            myWriter.write('\n');
-//        }
-//        myWriter.close();
-//    }
-
     private String[] getParsedTerms(QueryParser queryParser, String queryString) {
-
         // use the snippetParser.parse to do the parsing
         // however, I do not know how to get parsed terms properly
         // so use toString() and expect a list of field:term delimited by space
@@ -130,6 +86,56 @@ public class LuceneSearch {
         }
 
         return matchedLocations;
+    }
+
+    private double[] getQueryCentroid(String queryString, List<String> previousDocIDs) {
+        double[] centroid = new double[w2vObj.embeddingSize];
+        for (String term: getParsedTerms(snippetParser, queryString)) {
+            if (w2vObj.w2v.containsKey(term)) {
+                Arrays.setAll(centroid, (i) -> centroid[i] + w2vObj.w2v.get(term)[i]);
+            }
+        }
+        w2vObj.normalize(centroid);
+
+        if (doQueryModification && previousDocIDs.size() > 0) {
+            double[] pDocCentroid = new double[w2vObj.embeddingSize];
+            for (String docID : previousDocIDs) {
+                if (w2vObj.docCentroid.containsKey(docID)) {
+                    System.out.println("Modifying query centroid with DocID " + docID);
+                    Arrays.setAll(pDocCentroid, (i) -> pDocCentroid[i] + w2vObj.docCentroid.get(docID)[i]);
+                }
+            }
+            w2vObj.normalize(pDocCentroid);
+
+            Arrays.setAll(centroid, (i) -> centroid[i] + pDocCentroid[i]);
+            w2vObj.normalize(centroid);
+        }
+
+        return centroid;
+    }
+
+    private String expandQueryTerms(String queryString) {
+        StringBuilder newQueryTerm = new StringBuilder();
+        for (String term: getParsedTerms(snippetParser, queryString)) {
+            if (w2vObj.w2w.containsKey(term)) {
+                Collections.shuffle(w2vObj.w2w.get(term));
+
+                int count = 0;
+                for (String newTerm : w2vObj.w2w.get(term)) {
+                    if (count < 3 && !newTerm.equals(term)) {
+                        try {
+                            queryParser.parse(newTerm);
+                        } catch (ParseException e) {
+                            continue;
+                        }
+                        System.out.println("Expanding query with " + newTerm);
+                        newQueryTerm.append(" ").append(newTerm);
+                        count++;
+                    }
+                }
+            }
+        }
+        return newQueryTerm.toString();
     }
 
     private String getSnippet(String queryString, String contentString) {
@@ -188,27 +194,6 @@ public class LuceneSearch {
         }
     }
 
-//    private String expandQueryTerms(String queryString) {
-//
-//        for (String term: getParsedTerms(snippetParser, queryString)) {
-//            List<String> newTerms = word2Vec.similarWordsInVocabTo(term, 0.8);
-//
-//            int count = 0;
-//            for (String newTerm: newTerms) {
-//                if (count < 3 && !newTerm.equals(term)) {
-//                    try {
-//                        queryParser.parse(newTerm);
-//                    } catch (ParseException e) {
-//                        continue;
-//                    }
-//                    queryString = queryString + " " + newTerm;
-//                    count++;
-//                }
-//            }
-//        }
-//        return queryString;
-//    }
-
     private int getNumCloseCoOccurrence(String queryString, String contentString) {
         // convert queryString to a list of parsed words
         String[] queryTerms = getParsedTerms(snippetParser, queryString);
@@ -235,55 +220,98 @@ public class LuceneSearch {
         return numCloseCoOccurrence;
     }
 
+    private void addScore(List<QueryResult> queryResults) {
+        double rank = 1;
+        double last = -1;
+        for (QueryResult queryResult : queryResults) {
+            queryResult.scoreFinal += 1. / rank;
+            if (queryResult.scoreFinal != last) {
+                last = queryResult.scoreFinal;
+                rank++;
+            }
+        }
+    }
+
+    private void sortQueryResult(List<QueryResult> queryResults) {
+        queryResults.forEach( r -> r.scoreFinal = 0);
+
+        queryResults.sort(Comparator.comparing(QueryResult::getScoreBM25).reversed());
+        addScore(queryResults);
+
+        queryResults.sort(Comparator.comparing(QueryResult::getScoreCosineSim).reversed());
+        addScore(queryResults);
+
+        queryResults.sort(Comparator.comparing(QueryResult::getScoreNumCloseCoOccurrence).reversed());
+        addScore(queryResults);
+
+        queryResults.sort(Comparator.comparing(QueryResult::getScorePageRank).reversed());
+        addScore(queryResults);
+
+        queryResults.sort(Comparator.comparing(QueryResult::getScoreFinal).reversed());
+    }
+
     @GetMapping("/lucene")
     public String query(
-            @RequestParam(required=false, defaultValue="") String queryString
+            @RequestParam(required=false, defaultValue="") String queryString,
+            @RequestParam(required=false, defaultValue="") String docID
     ) throws IOException, ParseException {
+
+        if (queryString.isEmpty())
+            return JSONArray.toJSONString(new ArrayList<>());
 
         long startTime = System.nanoTime();
 
-        // expand query term by word2vec
-//        if (doQueryExpansion)
-//            queryString = expandQueryTerms(queryString);
+        List<String> previousDocIDs = new ArrayList<>();
+        List<QueryResult> queryResults = new ArrayList<>();
 
-        List<Map<String, Object>> queryResults = new ArrayList<>();
+        if (!docID.isEmpty())
+            Collections.addAll(previousDocIDs, docID.split(","));
+
+        // get queryCentroid before expanding
+        double[] queryCentroid = getQueryCentroid(queryString, previousDocIDs);
+
+        // expand query term by word2vec
+        if (doQueryExpansion)
+            queryString += expandQueryTerms(queryString);
 
         // Lucene search
         Query query = queryParser.parse(queryString);
-        TopDocs topDocs = indexSearcher.search(query, numSearchResult);
+        TopDocs topDocs = indexSearcher.search(query, numSearchResult + numExtraSearchResult);
         ScoreDoc[] scoreDocs = topDocs.scoreDocs;
-
-        //test
-//        FSDirectory directory = FSDirectory.open(Paths.get(indexPath));
-//        IndexReader reader = DirectoryReader.open(directory);
 
         // construct return
         for (ScoreDoc scoreDoc : scoreDocs) {
             Document document = indexSearcher.doc(scoreDoc.doc);
+            double[] docCentroid = w2vObj.docCentroid.get(String.valueOf(scoreDoc.doc));
 
-//            Terms terms = reader.getTermVector(scoreDoc.doc, "content");
-//            final TermsEnum it = terms.iterator();
-//            BytesRef term = it.next();
-//            while (term != null) {
-//                String termString = term.utf8ToString();
-//                System.out.print(termString + ": ");
-//                term = it.next();
-//            }
+            QueryResult result = new QueryResult();
+            result.docID = String.valueOf(scoreDoc.doc);
+            result.url = document.get("url");
+            result.title = document.get("title");
+            result.snippet = getSnippet(queryString, document.get("content"));
+            result.previousDocIDs = previousDocIDs;
 
-            Map<String, Object> result = new HashMap<>();
-            result.put("age", document.get("Headers.Age"));
-            result.put("url", document.get("url"));
-            result.put("title", document.get("title"));
-            result.put("page_rank_score", Double.parseDouble(document.get("page_rank_score")));
-            result.put("BM25_score", scoreDoc.score);
-            result.put("numCloseCoOccurrence", getNumCloseCoOccurrence(queryString, document.get("content")));
-            result.put("snippet", getSnippet(queryString, document.get("content")));
+            result.scoreBM25 = scoreDoc.score;
+            result.scorePageRank = Double.parseDouble(document.get("page_rank_score"));
+            result.scoreCosineSim = w2vObj.cosSim(docCentroid, queryCentroid);
+            result.scoreNumCloseCoOccurrence = getNumCloseCoOccurrence(queryString, document.get("content"));
             queryResults.add(result);
+
+            System.out.println(result);
         }
+
+        sortQueryResult(queryResults);
+
+        while (queryResults.size() > numSearchResult)
+            queryResults.remove(numSearchResult);
 
         long endTime = System.nanoTime();
         System.out.println((endTime - startTime)/1e6);
 
-        return JSONArray.toJSONString(queryResults);
+        return JSONArray.toJSONString(
+                queryResults
+                        .stream()
+                        .map(QueryResult::getMap)
+                        .collect(Collectors.toList()));
     }
 }

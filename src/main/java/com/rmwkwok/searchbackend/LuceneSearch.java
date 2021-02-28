@@ -187,10 +187,19 @@ public class LuceneSearch {
         int i = seed.keySet().stream().min(Integer::compare).orElse(0);
         int j = i + n;
 
+        if (i < 0)
+            i = 0;
+        if (j < 0)
+            j = 0;
+        if (i >= matchedLocations.size())
+            i = matchedLocations.size() - 1;
+        if (j >= matchedLocations.size())
+            j = matchedLocations.size() - 1;
+
         try {
             return String.join("", Arrays.copyOfRange(contentTerms, matchedLocations.get(i), matchedLocations.get(j)));
         } catch (Exception e) {
-            return "No Snippet Available";
+            return "Snippet Not Available";
         }
     }
 

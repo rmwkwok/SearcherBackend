@@ -255,7 +255,6 @@ public class Search {
             result.docID = String.valueOf(docID);
             result.url = document.get("url");
             result.title = document.get("title");
-            result.snippet = getSnippet(docID, queryString);
             result.previousDocIDs = previousDocIDs;
 
             result.scoreBM25 = scoreDoc.score;
@@ -273,6 +272,9 @@ public class Search {
         // remove extra result
         while (queryResults.size() > numSearchResult)
             queryResults.remove(numSearchResult);
+
+        for (QueryResult qr: queryResults)
+            qr.snippet = getSnippet(Integer.valueOf(qr.docID), queryString);
 
         long endTime = System.nanoTime();
         System.out.println((endTime - startTime)/1e6);

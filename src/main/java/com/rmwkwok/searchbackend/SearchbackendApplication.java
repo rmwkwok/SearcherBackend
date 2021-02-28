@@ -14,7 +14,7 @@ public class SearchbackendApplication {
 	static String indexFolder = "/home/raymondkwok/git/InformationRetrieval/index";
 	static String w2vFolder = "/home/raymondkwok/git/InformationRetrieval/w2v";
 	static int numSearchResult = 10;
-	static int numExtraSearchResult = 10;
+	static int numExtraSearchResult = 20;
 	static int minSnippetWords = 30*2;
 	static int closeCoOccurrenceCondition = 4;
 	static boolean doQueryExpansion = true;

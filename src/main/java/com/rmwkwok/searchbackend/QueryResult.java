@@ -1,5 +1,6 @@
 package com.rmwkwok.searchbackend;
 
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -52,7 +53,7 @@ public class QueryResult {
         return "QueryResult{" +
                 "docID='" + docID + '\'' +
                 ", url='" + url + '\'' +
-                ", previousDocIDs=" + previousDocIDs +
+                ", previousDocIDs=" + Arrays.toString(previousDocIDs) +
                 ", scoreFinal=" + scoreFinal +
                 ", scoreBM25=" + scoreBM25 +
                 ", scorePageRank=" + scorePageRank +

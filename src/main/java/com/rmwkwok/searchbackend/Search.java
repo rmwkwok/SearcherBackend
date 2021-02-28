@@ -3,12 +3,10 @@ package com.rmwkwok.searchbackend;
 import org.apache.lucene.analysis.en.EnglishAnalyzer;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.index.*;
+import org.apache.lucene.queryparser.classic.MultiFieldQueryParser;
 import org.apache.lucene.queryparser.classic.ParseException;
 import org.apache.lucene.queryparser.classic.QueryParser;
-import org.apache.lucene.search.IndexSearcher;
-import org.apache.lucene.search.Query;
-import org.apache.lucene.search.ScoreDoc;
-import org.apache.lucene.search.TopDocs;
+import org.apache.lucene.search.*;
 import org.apache.lucene.search.similarities.BM25Similarity;
 import org.apache.lucene.store.FSDirectory;
 import org.json.simple.JSONArray;
@@ -40,7 +38,7 @@ public class Search {
         long startTime = System.nanoTime();
 
         // Lucene
-        queryParser = new QueryParser("content", new EnglishAnalyzer());
+        queryParser = new MultiFieldQueryParser(new String[] {"content", "title", "anchor_text"}, new EnglishAnalyzer());
         indexReader = DirectoryReader.open(FSDirectory.open(Paths.get(SearchbackendApplication.indexFolder)));
         indexSearcher = new IndexSearcher(indexReader);
         indexSearcher.setSimilarity(new BM25Similarity());
@@ -139,50 +137,60 @@ public class Search {
                 .sorted(TermPosition::compareTo)
                 .collect(Collectors.toList());
 
+        String content;
+        try {
+            content = indexSearcher.doc(docID).get("content");
+        } catch (IOException e) {
+            content = "";
+            System.out.println("getSnippet:: Unable to get content");
+        }
 
-
-        // Second, find a snippet window with highest density
+        // Find a snippet window with highest density
         // Initially, all matched locations are seeds (index, window length).
         // For each seed, it and its n neighbour form a snippet window of n+1 matches
         // The seed with window of smallest length becomes seed for round n+2
         // It keeps iterate until length >= [minSnippetWords]
-        int n = 0;
-        Map<Integer, Integer> seed = new HashMap<>();
-        for (int i = 0; i < termPositions.size(); i++)
-            seed.put(i, 1);
+        if (termPositions.size() > 0) {
+            int n = 0;
+            Map<Integer, Integer> seed = new HashMap<>();
+            for (int i = 0; i < termPositions.size(); i++)
+                seed.put(i, 1);
 
-        int minLength;
-        do {
-            n++;
-            Map<Integer, Integer> temp = new HashMap<>();
+            int minLength;
+            do {
+                n++;
+                Map<Integer, Integer> temp = new HashMap<>();
 
-            for (Map.Entry<Integer, Integer> entry : seed.entrySet())
-                for (int index: new int[] {entry.getKey() - 1, entry.getKey()})
-                    if ((index >= 0) && (index + n < termPositions.size()))
-                        temp.put(index, termPositions.get(index + n).position - termPositions.get(index).position + 1);
+                for (Map.Entry<Integer, Integer> entry : seed.entrySet())
+                    for (int index : new int[]{entry.getKey() - 1, entry.getKey()})
+                        if ((index >= 0) && (index + n < termPositions.size()))
+                            temp.put(index, termPositions.get(index + n).position - termPositions.get(index).position + 1);
 
-            seed.clear();
+                seed.clear();
 
-            minLength = temp.values().stream().min(Integer::compare).orElse(minSnippetWords);
-            for (Map.Entry<Integer, Integer> entry : temp.entrySet())
-                if (entry.getValue() == minLength)
-                    seed.put(entry.getKey(), entry.getValue());
+                minLength = temp.values().stream().min(Integer::compare).orElse(minSnippetWords);
+                for (Map.Entry<Integer, Integer> entry : temp.entrySet())
+                    if (entry.getValue() == minLength)
+                        seed.put(entry.getKey(), entry.getValue());
 
-        } while (minLength < minSnippetWords);
+            } while (minLength < minSnippetWords);
 
-        // i and j are beginning and ending index for matchedLocations
-        // need them to get index of contentTerms
-        int i = seed.keySet().stream().min(Integer::compare).orElse(0);
-        int j = Math.min(i + n, termPositions.size() - 1);
+            // i and j are beginning and ending index for matchedLocations
+            // need them to get index of contentTerms
+            int i = seed.keySet().stream().min(Integer::compare).orElse(0);
+            int j = Math.min(i + n, termPositions.size() - 1);
 
-        try {
-            Document document = indexSearcher.doc(docID);
-            String snippet = document.get("content").substring(termPositions.get(i).startOffset, termPositions.get(j).endOffset);
+
+            String snippet = content.substring(termPositions.get(i).startOffset, termPositions.get(j).endOffset);
             System.out.println("getSnippet:: length: " + snippet.length());
             return "... " + snippet + " ...";
-        } catch (Exception e) {
-            System.out.println("getSnippet:: Snippet Not Available. (i,j)=" + i + " " + j);
-            return "Snippet Not Available";
+        }
+        else {
+            System.out.println("getSnippet:: No matched words");
+            return String.join("",
+                    Arrays.stream(content.split("((?<=[^a-zA-Z0-9])|(?=[^a-zA-Z0-9]))"))
+                            .limit(minSnippetWords)
+                            .collect(Collectors.toList())) + " ...";
         }
     }
 
@@ -227,6 +235,7 @@ public class Search {
 
         // Lucene search
         Query query = queryParser.parse(queryString);
+
         TopDocs topDocs = indexSearcher.search(query, numSearchResult + numExtraSearchResult);
         ScoreDoc[] scoreDocs = topDocs.scoreDocs;
 

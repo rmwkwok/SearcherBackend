@@ -1,7 +1,6 @@
 package com.rmwkwok.searchbackend;
 
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 
 public class QueryResult {
@@ -9,7 +8,7 @@ public class QueryResult {
     String url;
     String title;
     String snippet;
-    List<String> previousDocIDs;
+    String[] previousDocIDs;
 
     double scoreFinal;
 

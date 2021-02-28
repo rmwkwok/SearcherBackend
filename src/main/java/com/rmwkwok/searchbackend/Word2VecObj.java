@@ -1,8 +1,10 @@
 package com.rmwkwok.searchbackend;
 
-import org.apache.lucene.index.DirectoryReader;
-import org.apache.lucene.index.IndexReader;
+import org.apache.lucene.document.Document;
+import org.apache.lucene.index.*;
+import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.store.FSDirectory;
+import org.apache.lucene.util.BytesRef;
 
 import java.io.*;
 import java.nio.file.Paths;
@@ -33,6 +35,59 @@ public class Word2VecObj {
     Map<String, List<String>> d2d;
 
     Word2VecObj() throws IOException {
+
+//        IndexReader ir = DirectoryReader.open(FSDirectory.open(Paths.get(SearchbackendApplication.indexFolder)));
+//        IndexSearcher indexSearcher = new IndexSearcher(DirectoryReader.open(FSDirectory.open(Paths.get(SearchbackendApplication.indexFolder))));
+//        int n=3;
+//        Terms tv = ir.getTermVector( n, "content" );
+//        TermsEnum terms = tv.iterator();
+//        PostingsEnum p = null;
+////        PostingsEnum pe = lr.postings(new Term("content", termString));
+//        while( terms.next() != null ) {
+//            p = terms.postings( p, PostingsEnum.ALL );
+//            while( p.nextDoc() != PostingsEnum.NO_MORE_DOCS ) {
+//                for( int i = 0; i < p.freq(); i++ ) {
+//                    System.out.println( terms.term().utf8ToString() + "," + p.docID() + "," + p.freq() + "," +  p.nextPosition() + "," + p.startOffset() + "," + p.endOffset()); // Fails miserably, of course.
+//                }
+//            }
+//        }
+//        Document document = ir.document(n);
+//        System.out.println("=============================================");
+//        System.out.println(document.get("content"));
+
+//
+//        Terms t = reader.getTermVector(1, "content");
+//        TermsEnum te = t.iterator();
+//
+//        BytesRef term = te.next();
+//        while (term!=null) {
+//            String termString = term.utf8ToString();
+//            for (LeafReaderContext lrc : reader.leaves()) {
+//                LeafReader lr = lrc.reader();
+//                PostingsEnum pe = lr.postings(new Term("content", termString));
+//                int docId = pe.nextDoc();
+//                while (docId != PostingsEnum.NO_MORE_DOCS) {
+//                    System.out.println(termString + "::     " + docId);
+//                    docId = pe.nextDoc();
+//                }
+//                System.out.println("XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX");
+//                System.out.println(term.utf8ToString() + "     ::" + pe.toString());
+//                System.out.println(term.utf8ToString() + "     ::" + pe.freq());
+//                System.out.println(term.utf8ToString() + "     ::" + pe.startOffset());
+//                System.out.println(term.utf8ToString() + "     ::" + pe.endOffset());
+//                System.out.println(term.utf8ToString() + "     ::" + pe.getPayload());
+//
+//                List<Integer> ps = new ArrayList<>();
+//                int p = pe.nextPosition();
+//                while (p != -1) {
+//                    ps.add(p);
+//                    p = pe.nextPosition();
+//                }
+//                System.out.println(term.utf8ToString() + "     ::" + ps);
+//            }
+//            term = te.next();
+//        }
+
         w2v = readEmbedding(w2vPath);
         _docCentroid = readEmbedding(docCentroidPath);
         w2w = readX2X(w2wPath);

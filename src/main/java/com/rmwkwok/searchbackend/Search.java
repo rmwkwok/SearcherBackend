@@ -25,7 +25,9 @@ public class Search {
     final boolean doQueryExpansion = SearchbackendApplication.doQueryExpansion;
     final boolean doQueryModification = SearchbackendApplication.doQueryModification;
     final private int minSnippetWords = SearchbackendApplication.minSnippetWords;
+    final private int maxSnippetWords = SearchbackendApplication.maxSnippetWords;
     final private int numSearchResult = SearchbackendApplication.numSearchResult;
+    final private int queryExpandLimit = SearchbackendApplication.queryExpandLimit;
     final private int numExtraSearchResult = SearchbackendApplication.numExtraSearchResult;
     final private int closeCoOccurrenceCondition = SearchbackendApplication.closeCoOccurrenceCondition;
 
@@ -180,6 +182,8 @@ public class Search {
             int i = seed.keySet().stream().min(Integer::compare).orElse(0);
             int j = Math.min(i + n, termPositions.size() - 1);
 
+            while (termPositions.get(j).position - termPositions.get(i).position >= maxSnippetWords)
+                j-=1;
 
             String snippet = content.substring(termPositions.get(i).startOffset, termPositions.get(j).endOffset);
             System.out.println("getSnippet:: length: " + snippet.length());
@@ -358,7 +362,7 @@ public class Search {
 
                     w2vObj.w2w.get(qs).stream()
                             .filter(ns -> !ns.equals(qs) && isParsable(ns))
-                            .limit(3)
+                            .limit(queryExpandLimit)
                             .forEach(ns -> {
                                 System.out.println("expandQueryTerms:: " + ns);
                                 newQueryTerm.append(" ").append(ns);

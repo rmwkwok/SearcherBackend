@@ -14,8 +14,10 @@ public class SearchbackendApplication {
 	static String indexFolder = "/home/raymondkwok/git/InformationRetrieval/index";
 	static String w2vFolder = "/home/raymondkwok/git/InformationRetrieval/w2v";
 	static int numSearchResult = 10;
+	static int minSnippetWords = 60;
+	static int maxSnippetWords = 90;
+	static int queryExpandLimit = 3;
 	static int numExtraSearchResult = 20;
-	static int minSnippetWords = 30*2;
 	static int closeCoOccurrenceCondition = 4;
 	static boolean doQueryExpansion = true;
 	static boolean doQueryModification = true;
@@ -31,7 +33,9 @@ public class SearchbackendApplication {
 		options.addOption(Option.builder().type(Number.class).hasArg().longOpt("numSearchResult").argName(String.valueOf(numSearchResult)).desc("Number of search results to return").build());
 		options.addOption(Option.builder().type(Number.class).hasArg().longOpt("numExtraSearchResult").argName(String.valueOf(numExtraSearchResult)).desc("Number of extra search results to consider before returning the top results").build());
 		options.addOption(Option.builder().type(Number.class).hasArg().longOpt("minSnippetWords").argName(String.valueOf(minSnippetWords)).desc("Minimum number of words in considering the best snippet").build());
+		options.addOption(Option.builder().type(Number.class).hasArg().longOpt("maxSnippetWords").argName(String.valueOf(maxSnippetWords)).desc("Maximum number of words in considering the best snippet").build());
 		options.addOption(Option.builder().type(Number.class).hasArg().longOpt("closeCoOccurrenceCondition").argName(String.valueOf(closeCoOccurrenceCondition)).desc("How close in terms of number of words to consider as close co-occurrence").build());
+		options.addOption(Option.builder().type(Number.class).hasArg().longOpt("queryExpandLimit").argName(String.valueOf(queryExpandLimit)).desc("How many new query word to expand for each query word").build());
 		options.addOption(Option.builder().type(Number.class).hasArg().longOpt("doQueryExpansion").argName(doQueryExpansion ? "1" : "0").desc("Whether to do expand query with similar words or not. Positive integer to enable").build());
 		options.addOption(Option.builder().type(Number.class).hasArg().longOpt("doQueryModification").argName(doQueryModification ? "1" : "0").desc("Whether to modify query word with document id or not. Positive integer to enable").build());
 

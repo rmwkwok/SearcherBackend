@@ -216,10 +216,22 @@ public class Search {
         return getCloseCoOccurrenceIndex(termPositions).size();
     }
 
-    @GetMapping("/lucene")
+    private SearchedDoc[] luceneSearch(String queryString) throws IOException, ParseException {
+        Query query = queryParser.parse(queryString);
+
+        TopDocs topDocs = indexSearcher.search(query, numSearchResult + numExtraSearchResult);
+        ScoreDoc[] scoreDocs = topDocs.scoreDocs;
+
+        return Arrays.stream(scoreDocs)
+                .map((sd) -> new SearchedDoc(sd.doc, sd.score))
+                .toArray(SearchedDoc[]::new);
+    }
+
+    @GetMapping("/search")
     public String query(
             @RequestParam(required=false, defaultValue="") String queryString,
-            @RequestParam(required=false, defaultValue="") String pDocIDs
+            @RequestParam(required=false, defaultValue="") String pDocIDs,
+            @RequestParam(defaultValue="lucene") String index
     ) throws IOException, ParseException {
 
         long startTime = System.nanoTime();
@@ -236,16 +248,17 @@ public class Search {
         if (doQueryExpansion)
             queryString += expandQueryTerms(queryString);
 
-        // Lucene search
-        Query query = queryParser.parse(queryString);
-
-        TopDocs topDocs = indexSearcher.search(query, numSearchResult + numExtraSearchResult);
-        ScoreDoc[] scoreDocs = topDocs.scoreDocs;
+        // Search
+        SearchedDoc[] sds;
+        if (index == "lucene")
+            sds = luceneSearch(queryString);
+        else
+            sds = luceneSearch(queryString);
 
         // construct return
         List<QueryResult> queryResults = new ArrayList<>();
-        for (ScoreDoc scoreDoc : scoreDocs) {
-            int docID = scoreDoc.doc;
+        for (SearchedDoc sd : sds) {
+            int docID = sd.docID;
 
             Document document = indexSearcher.doc(docID);
             double[] docCentroid = w2vObj.docCentroid.get(String.valueOf(docID));
@@ -256,7 +269,7 @@ public class Search {
             result.title = document.get("title");
             result.previousDocIDs = previousDocIDs;
 
-            result.scoreBM25 = scoreDoc.score;
+            result.scoreBM25 = sd.bm25Score;
             result.scorePageRank = Double.parseDouble(document.get("page_rank_score"));
             result.scoreCosineSim = w2vObj.cosSim(docCentroid, queryCentroid);
             result.scoreNumCloseCoOccurrence = getNumCloseCoOccurrence(docID, queryString);

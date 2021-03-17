@@ -34,7 +34,10 @@ public class Word2VecObj {
     Map<String, List<String>> _d2d;
     Map<String, List<String>> d2d;
 
-    Word2VecObj() throws IOException {
+    Map<String, String> fileNameToDocID;
+
+    Word2VecObj(Map<String, String> fileNameToDocID) throws IOException {
+        this.fileNameToDocID = fileNameToDocID;
         w2v = readEmbedding(w2vPath);
         _docCentroid = readEmbedding(docCentroidPath);
         w2w = readX2X(w2wPath);
@@ -104,7 +107,7 @@ public class Word2VecObj {
         return x2x;
     }
 
-    private void convertFileNameToDocID() throws IOException {
+    private void convertFileNameToDocID() {
         if (_d2d == null)
             return;
         else {
@@ -112,29 +115,23 @@ public class Word2VecObj {
             docCentroid = new HashMap<>();
         }
 
-        Map<String, String> mapping = new HashMap<>();
-        IndexReader reader = DirectoryReader.open(FSDirectory.open(Paths.get(SearchbackendApplication.indexFolder)));
-        for (int i = 0; i < reader.maxDoc(); i++)
-            mapping.put(reader.document(i).get("filename"), String.valueOf(i));
-        reader.close();
-
         _d2d.keySet().forEach(key -> {
-            if (!mapping.containsKey(key))
+            if (!fileNameToDocID.containsKey(key))
                 return;
 
             List<String> temp = new ArrayList<>();
             _d2d.get(key).forEach(val -> {
-                if (!mapping.containsKey(val))
+                if (!fileNameToDocID.containsKey(val))
                     return;
-                temp.add(mapping.get(val));
+                temp.add(fileNameToDocID.get(val));
             });
-            d2d.put(mapping.get(key), temp);
+            d2d.put(fileNameToDocID.get(key), temp);
         });
 
         _docCentroid.keySet().forEach(key -> {
-            if (!mapping.containsKey(key))
+            if (!fileNameToDocID.containsKey(key))
                 return;
-            docCentroid.put(mapping.get(key), _docCentroid.get(key));
+            docCentroid.put(fileNameToDocID.get(key), _docCentroid.get(key));
         });
 
         _d2d.clear();

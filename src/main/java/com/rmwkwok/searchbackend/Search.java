@@ -12,11 +12,13 @@ import org.apache.lucene.store.FSDirectory;
 import org.json.simple.JSONArray;
 import org.springframework.web.bind.annotation.*;
 
+import java.io.BufferedReader;
+import java.io.FileReader;
 import java.io.IOException;
+import java.lang.reflect.Array;
 import java.nio.file.Paths;
 import java.util.*;
 import java.util.stream.Collectors;
-import java.util.stream.IntStream;
 
 @RestController
 @RequestMapping("/search")
@@ -37,6 +39,13 @@ public class Search {
     final private IndexReader indexReader;
     final private IndexSearcher indexSearcher;
 
+    final private double bm25k1 = 1.2;
+    final private double bm25k2 = 100.0;
+    final private double bm25b = 0.75;
+
+    final private Map<String, String> fileNameToDocID;
+    final private Map<String, Map<String, Double>> hadoopIndex;
+
     Search() throws IOException {
         long startTime = System.nanoTime();
 
@@ -45,12 +54,74 @@ public class Search {
         indexReader = DirectoryReader.open(FSDirectory.open(Paths.get(SearchbackendApplication.indexFolder)));
         indexSearcher = new IndexSearcher(indexReader);
         indexSearcher.setSimilarity(new BM25Similarity());
+        fileNameToDocID = new HashMap<>();
+
+        for (int i = 0; i < indexReader.maxDoc(); i++)
+            fileNameToDocID.put(indexReader.document(i).get("filename"), String.valueOf(i));
+
+        // Hadoop
+        hadoopIndex = initHadoopIndex();
 
         // Common
-        w2vObj = new Word2VecObj();
+        w2vObj = new Word2VecObj(fileNameToDocID);
 
         long endTime = System.nanoTime();
         System.out.println("Search initialization took " + (endTime - startTime)/1e6 + "ms");
+    }
+
+    /**
+     * initialize Hadoop index
+     * @return Map<String, Map<String, Double>> hadoop index
+     */
+    private Map<String, Map<String, Double>> initHadoopIndex() throws IOException {
+        Map<String, Map<String, Integer>> rawData = new HashMap<>();
+        String _hadoopIndexPath = Paths.get("/home/raymondkwok/git/InformationRetrieval/hadoopIndex").toString();
+
+        BufferedReader reader = new BufferedReader(new FileReader(_hadoopIndexPath));
+
+        String line = reader.readLine();
+        while (line != null) {
+            String[] _line = line.split("\t");
+            try {
+                Map<String, Integer> map = new HashMap<>();
+                Arrays.stream(_line[1].split(",")).forEach(s -> {
+                    String[] _s = s.split(":");
+                    map.put(_s[0], Integer.valueOf(_s[1]));
+                });
+                rawData.put(_line[0], map);
+            } catch (Exception e) {
+                System.out.println("Parse HadoopIndex error");
+                System.out.println(line);
+                e.printStackTrace();
+                break;
+            }
+            line = reader.readLine();
+        }
+        reader.close();
+
+        Map<String, Map<String, Double>> _hadoopIndex = new HashMap<>();
+
+        // dl[doc] = length of document
+        // N = |dl| = number of document
+        Map<String, Integer> dl = new HashMap<>();
+        rawData.forEach((w, v) -> v.forEach((d, f) -> dl.put(d,  f + dl.getOrDefault(d, 0))));
+
+        double N = dl.size();
+        double avdl = dl.values().stream().reduce(0, Integer::sum).doubleValue()/N;
+
+        for (Map.Entry<String, Map<String, Integer>> e1 : rawData.entrySet()) {
+            double n = e1.getValue().size();
+            Map<String, Double> temp = new HashMap<>();
+            e1.getValue().forEach((d, f) -> {
+                if (fileNameToDocID.containsKey(d)) {
+                    double K = bm25k1 * ((1 - bm25b) + bm25b * dl.get(d) / avdl);
+                    temp.put(fileNameToDocID.get(d), Math.log((N - n + 0.5) / (n + 0.5)) * (bm25k1 + 1) * f / (K + f));
+                }
+            });
+            _hadoopIndex.put(e1.getKey(), temp);
+        }
+
+        return _hadoopIndex;
     }
 
     /**
@@ -191,10 +262,9 @@ public class Search {
         else {
             System.out.println("getSnippet:: No matched words");
         }
-        return String.join("",
-                Arrays.stream(content.split("((?<=[^a-zA-Z0-9])|(?=[^a-zA-Z0-9]))"))
-                        .limit(minSnippetWords)
-                        .collect(Collectors.toList())) + " ...";
+        return Arrays.stream(content.split("((?<=[^a-zA-Z0-9])|(?=[^a-zA-Z0-9]))"))
+                .limit(minSnippetWords)
+                .collect(Collectors.joining("")) + " ...";
     }
 
     /**
@@ -216,6 +286,13 @@ public class Search {
         return getCloseCoOccurrenceIndex(termPositions).size();
     }
 
+    /**
+     * Perform a lucene search
+     * @param queryString String
+     * @return SearchedDoc[] an array of SearchedDoc
+     * @throws IOException IOException
+     * @throws ParseException ParseException
+     */
     private SearchedDoc[] luceneSearch(String queryString) throws IOException, ParseException {
         Query query = queryParser.parse(queryString);
 
@@ -223,7 +300,35 @@ public class Search {
         ScoreDoc[] scoreDocs = topDocs.scoreDocs;
 
         return Arrays.stream(scoreDocs)
-                .map((sd) -> new SearchedDoc(sd.doc, sd.score))
+                .map((sd) -> new SearchedDoc(String.valueOf(sd.doc), sd.score))
+                .toArray(SearchedDoc[]::new);
+    }
+
+    /**
+     * Perform a hadoop search
+     * @param queryString String
+     * @return SearchedDoc[] an array of SearchedDoc
+     */
+    private SearchedDoc[] hadoopSearch(String queryString) {
+        String[] tokens = simpleTokenizer(queryString);
+
+        Map<String, Integer> qf = new HashMap<>();
+        for (String token: tokens)
+            qf.put(token, qf.getOrDefault(token, 0) + 1);
+
+        Map<String, Double> candidate = new HashMap<>();
+        qf.forEach((w, f) -> {
+            if (hadoopIndex.containsKey(w)) {
+                hadoopIndex.get(w).forEach((d, s) ->
+                        candidate.put(d,
+                                candidate.getOrDefault(d, 0.0) + s * (bm25k2 + 1) * f / (bm25k2 + f)));
+            }
+        });
+
+        return candidate.entrySet().stream()
+                .sorted(Map.Entry.<String, Double> comparingByValue().reversed())
+                .limit(numSearchResult + numExtraSearchResult)
+                .map(e -> new SearchedDoc(e.getKey(), e.getValue()))
                 .toArray(SearchedDoc[]::new);
     }
 
@@ -250,21 +355,21 @@ public class Search {
 
         // Search
         SearchedDoc[] sds;
-        if (index == "lucene")
-            sds = luceneSearch(queryString);
+        if (!index.equals("lucene"))
+            sds = hadoopSearch(queryString);
         else
             sds = luceneSearch(queryString);
 
         // construct return
         List<QueryResult> queryResults = new ArrayList<>();
         for (SearchedDoc sd : sds) {
-            int docID = sd.docID;
+            String docID = sd.docID;
 
-            Document document = indexSearcher.doc(docID);
-            double[] docCentroid = w2vObj.docCentroid.get(String.valueOf(docID));
+            Document document = indexSearcher.doc(Integer.parseInt(docID));
+            double[] docCentroid = w2vObj.docCentroid.get(docID);
 
             QueryResult result = new QueryResult();
-            result.docID = String.valueOf(docID);
+            result.docID = docID;
             result.url = document.get("url");
             result.title = document.get("title");
             result.previousDocIDs = previousDocIDs;
@@ -272,21 +377,21 @@ public class Search {
             result.scoreBM25 = sd.bm25Score;
             result.scorePageRank = Double.parseDouble(document.get("page_rank_score"));
             result.scoreCosineSim = w2vObj.cosSim(docCentroid, queryCentroid);
-            result.scoreNumCloseCoOccurrence = getNumCloseCoOccurrence(docID, queryString);
+            result.scoreNumCloseCoOccurrence = getNumCloseCoOccurrence(Integer.parseInt(docID), queryString);
             queryResults.add(result);
 
             System.out.println(result);
         }
 
         // sort query result by scores
-        sortQueryResult(queryResults);
+        sortQueryResult(queryResults, previousDocIDs.length>0);
 
         // remove extra result
         while (queryResults.size() > numSearchResult)
             queryResults.remove(numSearchResult);
 
         for (QueryResult qr: queryResults)
-            qr.snippet = getSnippet(Integer.valueOf(qr.docID), queryString);
+            qr.snippet = getSnippet(Integer.parseInt(qr.docID), queryString);
 
         long endTime = System.nanoTime();
         System.out.println((endTime - startTime)/1e6);
@@ -301,7 +406,7 @@ public class Search {
      * @return String[] a list of tokens
      */
     private String[] simpleTokenizer(String queryString) {
-        return Arrays.stream(queryString.split("[^A-Za-z0-9]"))
+        return Arrays.stream(queryString.split("[^A-Za-z]"))
                 .filter( s -> !s.equals("") && !s.isEmpty() )
                 .toArray(String[]::new);
     }
@@ -372,7 +477,7 @@ public class Search {
         Arrays.stream(simpleTokenizer(queryString))
                 .filter(qs -> w2vObj.w2w.containsKey(qs))
                 .forEach(qs -> {
-                    Collections.shuffle(w2vObj.w2w.get(qs));
+//                    Collections.shuffle(w2vObj.w2w.get(qs));
 
                     w2vObj.w2w.get(qs).stream()
                             .filter(ns -> !ns.equals(qs) && isParsable(ns))
@@ -391,11 +496,11 @@ public class Search {
      * Then it convert rank to score by 1 / rank
      * @param queryResults List<QueryResult>
      */
-    private void addScore(List<QueryResult> queryResults) {
+    private void addScore(List<QueryResult> queryResults, double factor) {
         double rank = 1;
         double last = -1;
         for (QueryResult queryResult : queryResults) {
-            queryResult.scoreFinal += 1. / rank;
+            queryResult.scoreFinal += factor / rank;
             if (queryResult.scoreFinal != last) {
                 last = queryResult.scoreFinal;
                 rank++;
@@ -408,20 +513,20 @@ public class Search {
      * all the scores are added together, then the result is sorted along final score and returned
      * @param queryResults List<QueryResult>
      */
-    private void sortQueryResult(List<QueryResult> queryResults) {
+    private void sortQueryResult(List<QueryResult> queryResults, boolean hasPDocIDs) {
         queryResults.forEach( r -> r.scoreFinal = 0);
 
         queryResults.sort(Comparator.comparing(QueryResult::getScoreBM25).reversed());
-        addScore(queryResults);
+        addScore(queryResults, 1.0);
 
         queryResults.sort(Comparator.comparing(QueryResult::getScoreCosineSim).reversed());
-        addScore(queryResults);
+        addScore(queryResults, hasPDocIDs ? 10.0 : 1.0);
 
         queryResults.sort(Comparator.comparing(QueryResult::getScoreNumCloseCoOccurrence).reversed());
-        addScore(queryResults);
+        addScore(queryResults, 1.0);
 
         queryResults.sort(Comparator.comparing(QueryResult::getScorePageRank).reversed());
-        addScore(queryResults);
+        addScore(queryResults, 1.0);
 
         queryResults.sort(Comparator.comparing(QueryResult::getScoreFinal).reversed());
     }

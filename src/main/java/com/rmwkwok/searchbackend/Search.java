@@ -75,7 +75,7 @@ public class Search {
      */
     private Map<String, Map<String, Double>> initHadoopIndex() throws IOException {
         Map<String, Map<String, Integer>> rawData = new HashMap<>();
-        String _hadoopIndexPath = Paths.get("/home/raymondkwok/git/InformationRetrieval/hadoopIndex").toString();
+        String _hadoopIndexPath = Paths.get(SearchbackendApplication.hadoopIndexFolder).toString();
 
         BufferedReader reader = new BufferedReader(new FileReader(_hadoopIndexPath));
 

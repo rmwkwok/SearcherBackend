@@ -11,8 +11,9 @@ import java.io.File;
 @SpringBootApplication
 public class SearchbackendApplication {
 
-	static String indexFolder = "/home/raymondkwok/git/InformationRetrieval/index";
-	static String w2vFolder = "/home/raymondkwok/git/InformationRetrieval/w2v";
+	static String hadoopIndexFolder = "";
+	static String indexFolder = "";
+	static String w2vFolder = "";
 	static int numSearchResult = 10;
 	static int minSnippetWords = 60;
 	static int maxSnippetWords = 90;
@@ -28,6 +29,7 @@ public class SearchbackendApplication {
 
 		Options options = new Options();
 		options.addOption(Option.builder("h").longOpt("help").build());
+		options.addOption(Option.builder().required().type(File.class).hasArg().longOpt("hadoopIndexFolder").argName("folder").desc("Hadoop index folder").build());
 		options.addOption(Option.builder().required().type(File.class).hasArg().longOpt("indexFolder").argName("folder").desc("Lucene index folder").build());
 		options.addOption(Option.builder().required().type(File.class).hasArg().longOpt("w2vFolder").argName("folder").desc("w2v index folder").build());
 		options.addOption(Option.builder().type(Number.class).hasArg().longOpt("numSearchResult").argName(String.valueOf(numSearchResult)).desc("Number of search results to return").build());
@@ -49,6 +51,7 @@ public class SearchbackendApplication {
 
 			w2vFolder = ((File)cmd.getParsedOptionValue("w2vFolder")).getAbsolutePath();
 			indexFolder = ((File)cmd.getParsedOptionValue("indexFolder")).getAbsolutePath();
+			hadoopIndexFolder = ((File)cmd.getParsedOptionValue("hadoopIndexFolder")).getAbsolutePath();
 
 			if(cmd.hasOption( "numSearchResult" ))
 				numSearchResult = ((Number)cmd.getParsedOptionValue("numSearchResult")).intValue();
